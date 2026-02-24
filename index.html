@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TAG — Multiplayer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <!-- MQTT over WebSockets — no account needed, uses HiveMQ public broker -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0a0a10;
+      --surface: #12121e;
+      --border:  #2a2a4a;
+      --accent:  #ff3c3c;
+      --gold:    #ffd24a;
+      --teal:    #00e5c4;
+      --text:    #e8e8f0;
+      --muted:   #6a6a8a;
+      --green:   #39e87f;
+    }
+
+    html, body { width:100%; height:100%; background:var(--bg); color:var(--text);
+      font-family:'Rajdhani',sans-serif; overflow:hidden; }
+
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
+      background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0px,rgba(0,0,0,0) 2px,
+      rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px); }
+
+    .screen::after { content:""; position:fixed; inset:0; z-index:-1;
+      background-image:linear-gradient(rgba(0,229,196,.04) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(0,229,196,.04) 1px,transparent 1px);
+      background-size:40px 40px;
+      animation:gridScroll 20s linear infinite; }
+    @keyframes gridScroll { to { background-position:40px 40px; } }
+
+    .screen { display:none; flex-direction:column; align-items:center;
+      justify-content:center; height:100vh; padding:20px; gap:20px; }
+    .screen.active { display:flex; }
+
+    .game-title { font-family:'Black Ops One',cursive;
+      font-size:clamp(52px,10vw,96px); letter-spacing:12px; color:var(--accent);
+      text-shadow:0 0 20px rgba(255,60,60,.8),0 0 60px rgba(255,60,60,.3),4px 4px 0 #8b0000;
+      line-height:1; }
+    .game-sub { font-size:13px; letter-spacing:5px; color:var(--teal);
+      text-transform:uppercase; margin-top:4px; text-align:center; }
+
+    .card { background:var(--surface); border:1px solid var(--border);
+      border-radius:12px; padding:24px; width:100%; max-width:420px;
+      display:flex; flex-direction:column; gap:16px; }
+
+    .tabs { display:flex; border-bottom:1px solid var(--border); }
+    .tab-btn { flex:1; background:none; border:none; color:var(--muted);
+      font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700;
+      letter-spacing:3px; text-transform:uppercase; padding:10px; cursor:pointer;
+      border-bottom:2px solid transparent; transition:color .2s,border-color .2s; }
+    .tab-btn.active { color:var(--teal); border-bottom-color:var(--teal); }
+
+    .panel { flex-direction:column; gap:14px; display:none; }
+    .panel.visible { display:flex; }
+
+    .input-row { display:flex; flex-direction:column; gap:6px; }
+    label { font-size:11px; letter-spacing:3px; color:var(--muted); text-transform:uppercase; }
+    input[type=text] { background:#0d0d1a; border:1px solid var(--border); border-radius:6px;
+      color:var(--text); font-family:'Rajdhani',sans-serif; font-size:18px; font-weight:600;
+      padding:10px 14px; outline:none; transition:border-color .2s; width:100%; }
+    input:focus { border-color:var(--teal); }
+
+    .adjuster { display:flex; align-items:center; gap:12px; }
+    .adj-btn { width:36px; height:36px; background:#1a1a2e; border:1px solid var(--border);
+      border-radius:6px; color:var(--text); font-size:20px; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; transition:background .15s; }
+    .adj-btn:hover { background:var(--border); }
+    .adj-val { font-size:22px; font-weight:700; color:var(--gold); min-width:30px; text-align:center; }
+
+    .btn { background:var(--accent); color:#fff; border:none; border-radius:8px;
+      font-family:'Black Ops One',cursive; font-size:18px; letter-spacing:3px;
+      padding:14px; cursor:pointer; text-transform:uppercase; width:100%;
+      transition:transform .1s,box-shadow .1s;
+      box-shadow:0 4px 20px rgba(255,60,60,.4); }
+    .btn:hover { transform:translateY(-2px); box-shadow:0 6px 30px rgba(255,60,60,.6); }
+    .btn:active { transform:translateY(0); }
+    .btn.secondary { background:transparent; border:2px solid var(--teal);
+      color:var(--teal); box-shadow:0 0 20px rgba(0,229,196,.2); }
+    .btn.secondary:hover { background:rgba(0,229,196,.08); }
+    .btn:disabled { opacity:.35; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
+    .btn.green { background:#1a7a3a; box-shadow:0 4px 20px rgba(57,232,127,.3); }
+    .btn.green:not(:disabled):hover { background:#1f9044; box-shadow:0 6px 30px rgba(57,232,127,.5); }
+
+    .status-bar { font-size:13px; letter-spacing:1px; min-height:20px; text-align:center; }
+    .status-bar.error { color:var(--accent); }
+    .status-bar.ok    { color:var(--green); }
+    .status-bar.info  { color:var(--teal); }
+
+    .conn-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+      background:var(--muted); margin-right:6px; transition:background .3s; vertical-align:middle; }
+    .conn-dot.connected { background:var(--green); box-shadow:0 0 8px var(--green); }
+    .conn-dot.connecting { background:var(--gold); animation:pulse 1s ease infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .lobby-title { font-family:'Black Ops One',cursive; font-size:28px;
+      letter-spacing:6px; color:var(--teal); }
+    .code-section { text-align:center; }
+    .code-label { font-size:11px; letter-spacing:4px; color:var(--muted); text-transform:uppercase; }
+    .code-row { display:flex; align-items:center; justify-content:center; gap:12px; margin-top:6px; }
+    .code-display { font-family:'Black Ops One',cursive; font-size:46px;
+      letter-spacing:10px; color:var(--gold); text-shadow:0 0 20px rgba(255,210,74,.5); }
+    .copy-btn { background:#1a1a2e; border:1px solid var(--border); border-radius:6px;
+      color:var(--muted); cursor:pointer; padding:6px 10px; font-size:12px;
+      font-family:'Rajdhani',sans-serif; letter-spacing:2px; text-transform:uppercase;
+      transition:color .2s,border-color .2s; }
+    .copy-btn:hover { color:var(--gold); border-color:var(--gold); }
+
+    .player-grid { width:100%; max-width:420px; display:flex; flex-direction:column; gap:8px; }
+    .pcount { font-size:11px; letter-spacing:3px; color:var(--muted);
+      text-transform:uppercase; margin-bottom:4px; }
+    .player-slot { display:flex; align-items:center; gap:10px; padding:10px 14px;
+      border-radius:8px; border:1px solid var(--border); font-size:16px; font-weight:600; }
+    .player-slot.filled { background:#151528; }
+    .player-slot.empty  { background:transparent; color:var(--muted); font-style:italic; }
+    .pdot { width:10px; height:10px; border-radius:50%; background:var(--green);
+      box-shadow:0 0 8px var(--green); flex-shrink:0; }
+    .pdot.host { background:var(--gold); box-shadow:0 0 8px var(--gold); }
+    .badge { margin-left:auto; font-size:10px; letter-spacing:2px;
+      background:rgba(255,210,74,.15); color:var(--gold); border:1px solid var(--gold);
+      border-radius:4px; padding:2px 6px; }
+
+    #countdown-content { display:flex; align-items:center; justify-content:center; }
+    .big-num { font-family:'Black Ops One',cursive;
+      font-size:clamp(100px,25vw,200px); color:var(--accent);
+      text-shadow:0 0 40px rgba(255,60,60,.8),0 0 100px rgba(255,60,60,.4);
+      animation:scaleIn .3s ease; }
+    @keyframes scaleIn { from{transform:scale(1.5);opacity:0} to{transform:scale(1);opacity:1} }
+    .go-text { font-family:'Black Ops One',cursive; font-size:clamp(60px,15vw,120px);
+      color:var(--green); text-shadow:0 0 40px rgba(57,232,127,.8);
+      animation:scaleIn .3s ease; }
+
+    #game-wrap { position:fixed; inset:0; z-index:100; background:#000; display:none; }
+    #game-frame { width:100%; height:100%; border:none; }
+
+    .host-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center; }
+    .host-row label { font-size:13px; letter-spacing:2px; color:var(--muted); }
+
+    .note { font-size:11px; color:var(--muted); text-align:center; letter-spacing:1px;
+      line-height:1.6; max-width:400px; }
+  </style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div id="setup-screen" class="screen active">
+  <div>
+    <div class="game-title">TAG</div>
+    <div class="game-sub">Multiplayer Edition</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:var(--muted)">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-label">Connecting…</span>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-host">🎮 Host Game</button>
+      <button class="tab-btn"        id="tab-join">🔗 Join Game</button>
+    </div>
+
+    <div class="panel visible" id="host-panel">
+      <div class="input-row">
+        <label>Your Name</label>
+        <input type="text" id="host-name" placeholder="Enter your name…" maxlength="16">
+      </div>
+      <div class="input-row">
+        <label>Max Players</label>
+        <div class="adjuster">
+          <button class="adj-btn" id="max-minus">−</button>
+          <span class="adj-val" id="max-val">4</span>
+          <button class="adj-btn" id="max-plus">+</button>
+          <span style="color:var(--muted);font-size:13px">(2–8 players)</span>
+        </div>
+      </div>
+      <button class="btn" id="host-btn">CREATE ROOM</button>
+    </div>
+
+    <div class="panel" id="join-panel">
+      <div class="input-row">
+        <label>Your Name</label>
+        <input type="text" id="join-name" placeholder="Enter your name…" maxlength="16">
+      </div>
+      <div class="input-row">
+        <label>Room Code</label>
+        <input type="text" id="join-code" placeholder="XXXX" maxlength="4"
+          style="font-size:32px;letter-spacing:10px;text-align:center;text-transform:uppercase">
+      </div>
+      <button class="btn secondary" id="join-btn">JOIN ROOM</button>
+    </div>
+
+    <p class="status-bar" id="setup-status"></p>
+  </div>
+
+  <p class="note">No accounts needed &nbsp;·&nbsp; Works on school networks &nbsp;·&nbsp; Free &amp; instant</p>
+</div>
+
+<!-- LOBBY -->
+<div id="lobby-screen" class="screen">
+  <div class="lobby-title">LOBBY</div>
+
+  <div class="code-section">
+    <div class="code-label">Share this code with friends!</div>
+    <div class="code-row">
+      <span class="code-display" id="lobby-code">----</span>
+      <button class="copy-btn" id="copy-btn">COPY</button>
+    </div>
+  </div>
+
+  <div class="player-grid">
+    <div class="pcount" id="pcount">0 / 4 Players</div>
+    <div id="player-list"></div>
+  </div>
+
+  <div class="host-row" id="host-controls" style="display:none">
+    <label>Max Players:</label>
+    <button class="adj-btn" id="lobby-minus">−</button>
+    <span class="adj-val" id="lobby-max-val">4</span>
+    <button class="adj-btn" id="lobby-plus">+</button>
+  </div>
+
+  <div id="start-wrap" style="display:none;width:100%;max-width:420px">
+    <button class="btn green" id="start-btn" disabled>WAITING FOR PLAYERS…</button>
+  </div>
+
+  <p class="status-bar info" id="lobby-status">Waiting for players to join…</p>
+</div>
+
+<!-- COUNTDOWN -->
+<div id="countdown-screen" class="screen">
+  <div id="countdown-content"></div>
+</div>
+
+<!-- GAME -->
+<div id="game-wrap">
+  <iframe id="game-frame" src="about:blank" allow="autoplay; fullscreen" allowfullscreen></iframe>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const showScreen = id => {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+};
+const setSetupStatus = (msg, cls='') => { $('setup-status').textContent = msg; $('setup-status').className = 'status-bar ' + cls; };
+const setLobbyStatus = (msg, cls='info') => { $('lobby-status').textContent = msg; $('lobby-status').className = 'status-bar ' + cls; };
+
+function genCode() {
+  return Array.from({length:4}, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
+}
+
+// ── State ──
+let mqttClient  = null;
+let myName      = '';
+let myId        = 'p_' + Math.random().toString(36).slice(2,9);
+let roomCode    = '';
+let isHost      = false;
+let maxPlayers  = 4;
+let localMaxVal = 4;
+let players     = {};
+let gameStarted = false;
+
+const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+
+function topics() {
+  return {
+    join:  `tag_mp_v2/${roomCode}/join`,
+    state: `tag_mp_v2/${roomCode}/state`,
+    leave: `tag_mp_v2/${roomCode}/leave`,
+    start: `tag_mp_v2/${roomCode}/start`,
+  };
+}
+
+function pub(topic, payload) {
+  if (!mqttClient || !mqttClient.connected) return;
+  mqttClient.publish(topic, JSON.stringify(payload), { qos: 1, retain: false });
+}
+
+function subAll() {
+  const t = topics();
+  Object.values(t).forEach(topic => mqttClient.subscribe(topic, { qos: 1 }));
+}
+
+// ── Connect ──
+function connectMQTT(cb) {
+  setConnDot('connecting');
+  mqttClient = mqtt.connect(BROKER, {
+    clientId: myId,
+    clean: true,
+    reconnectPeriod: 4000,
+    connectTimeout: 12000,
+  });
+  mqttClient.on('connect', () => { setConnDot('connected'); $('conn-label').textContent = 'Connected!'; cb && cb(); cb = null; });
+  mqttClient.on('error', () => { $('conn-label').textContent = 'Error — retrying…'; });
+  mqttClient.on('offline', () => { setConnDot('connecting'); $('conn-label').textContent = 'Reconnecting…'; });
+  mqttClient.on('message', onMessage);
+}
+
+function setConnDot(s) {
+  $('conn-dot').className = 'conn-dot' + (s ? ' ' + s : '');
+}
+
+// ── Message Handler ──
+function onMessage(topic, raw) {
+  let d; try { d = JSON.parse(raw.toString()); } catch { return; }
+  const t = topics();
+
+  if (topic === t.join) {
+    if (isHost) {
+      // Someone wants to join
+      if (d.askTo === myId) {
+        if (Object.keys(players).length >= maxPlayers) {
+          pub(t.join, { replyTo: d.from, error: 'full' });
+          return;
+        }
+        players[d.from] = { name: d.name, isHost: false };
+        broadcastState();
+        renderLobby();
+      }
+    } else {
+      // Reply to me from host
+      if (d.replyTo === myId) {
+        if (d.error === 'full') { setSetupStatus('Room is full!', 'error'); return; }
+        if (d.error === 'notfound') { setSetupStatus('Room not found.', 'error'); return; }
+        players    = d.players;
+        maxPlayers = d.maxPlayers;
+        enterLobby();
+      }
+    }
+  }
+
+  else if (topic === t.state) {
+    if (!isHost) {
+      players    = d.players;
+      maxPlayers = d.maxPlayers;
+      renderLobby();
+    }
+  }
+
+  else if (topic === t.leave) {
+    delete players[d.from];
+    if (isHost) broadcastState();
+    renderLobby();
+  }
+
+  else if (topic === t.start) {
+    if (!gameStarted) { gameStarted = true; runCountdown(launchGame); }
+  }
+}
+
+// ── Host ──
+function hostRoom() {
+  myName     = $('host-name').value.trim() || 'Player 1';
+  isHost     = true;
+  roomCode   = genCode();
+  maxPlayers = localMaxVal;
+  players[myId] = { name: myName, isHost: true };
+
+  connectMQTT(() => {
+    subAll();
+    enterLobby();
+  });
+}
+
+// ── Join ──
+function joinRoom() {
+  myName   = $('join-name').value.trim() || 'Player';
+  roomCode = $('join-code').value.trim().toUpperCase();
+  if (roomCode.length !== 4) { setSetupStatus('Enter a 4-letter code!', 'error'); return; }
+  isHost = false;
+
+  setSetupStatus('Connecting…', 'info');
+
+  connectMQTT(() => {
+    subAll();
+    // Ask host to add us
+    pub(topics().join, { from: myId, askTo: 'HOST_' + roomCode, name: myName });
+    setSetupStatus('Looking for room…', 'info');
+
+    // We need the host's ID — use a broadcast approach:
+    // Host listens for joins with roomCode prefix
+    // Re-pub with broadcast marker so any host in this room sees it
+    setTimeout(() => {
+      pub(topics().join, { from: myId, broadcast: true, name: myName });
+    }, 300);
+
+    const timeout = setTimeout(() => {
+      setSetupStatus('Room not found. Check the code!', 'error');
+    }, 7000);
+
+    // Override onMessage temporarily to clear timeout on success
+    const prevCb = mqttClient._events && mqttClient._events.message;
+    mqttClient.once('message', function once(topic, raw) {
+      let d; try { d = JSON.parse(raw.toString()); } catch { return; }
+      if (d.replyTo === myId) { clearTimeout(timeout); }
+      // re-trigger main handler
+      onMessage(topic, raw);
+      // reattach
+    });
+  });
+}
+
+// ── Broadcast State (host) ──
+function broadcastState() {
+  pub(topics().state, { players, maxPlayers });
+}
+
+// ── Enter Lobby ──
+function enterLobby() {
+  showScreen('lobby-screen');
+  $('lobby-code').textContent = roomCode;
+  $('lobby-max-val').textContent = maxPlayers;
+
+  if (isHost) {
+    $('host-controls').style.display = 'flex';
+    $('start-wrap').style.display = 'block';
+  }
+
+  renderLobby();
+
+  window.addEventListener('beforeunload', () => {
+    pub(topics().leave, { from: myId });
+  });
+}
+
+// ── Render Lobby ──
+function renderLobby() {
+  const entries = Object.entries(players);
+  const list = $('player-list');
+  list.innerHTML = '';
+
+  entries.forEach(([id, p]) => {
+    const div = document.createElement('div');
+    div.className = 'player-slot filled';
+    div.innerHTML = `<span class="pdot${p.isHost?' host':''}"></span>
+      <span>${esc(p.name)}</span>${p.isHost?'<span class="badge">HOST</span>':''}`;
+    list.appendChild(div);
+  });
+
+  for (let i = entries.length; i < maxPlayers; i++) {
+    const div = document.createElement('div');
+    div.className = 'player-slot empty';
+    div.textContent = `Waiting for player ${i+1}…`;
+    list.appendChild(div);
+  }
+
+  $('pcount').textContent = `${entries.length} / ${maxPlayers} Players`;
+
+  if (isHost) {
+    const btn = $('start-btn');
+    const ready = entries.length >= 2;
+    btn.disabled = !ready;
+    btn.textContent = ready ? 'START GAME!' : `NEED ${2 - entries.length} MORE PLAYER${entries.length < 1 ? 'S' : ''}`;
+  }
+}
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Start Game ──
+function startGame() {
+  pub(topics().start, { from: myId });
+  gameStarted = true;
+  runCountdown(launchGame);
+}
+
+// ── Countdown ──
+function runCountdown(cb) {
+  showScreen('countdown-screen');
+  const el = $('countdown-content');
+  let n = 3;
+  function tick() {
+    if (n > 0) {
+      el.innerHTML = `<div class="big-num">${n}</div>`;
+      n--; setTimeout(tick, 1000);
+    } else {
+      el.innerHTML = `<div class="go-text">GO!</div>`;
+      setTimeout(cb, 700);
+    }
+  }
+  tick();
+}
+
+// ── Launch Game ──
+function launchGame() {
+  $('game-wrap').style.display = 'block';
+  $('game-frame').src = 'https://html-classic.itch.zone/html/11553818/index.html';
+}
+
+// ── Handle host seeing broadcast join requests ──
+// Patch onMessage to handle broadcast joins for host
+const _origOnMsg = onMessage;
+function onMessage(topic, raw) {
+  let d; try { d = JSON.parse(raw.toString()); } catch { return; }
+  const t = topics();
+
+  if (topic === t.join && isHost && d.broadcast && d.from !== myId) {
+    if (Object.keys(players).length >= maxPlayers) {
+      pub(t.join, { replyTo: d.from, error: 'full' });
+      return;
+    }
+    players[d.from] = { name: d.name, isHost: false };
+    pub(t.join, { replyTo: d.from, players, maxPlayers });
+    broadcastState();
+    renderLobby();
+    return;
+  }
+  if (topic === t.join && !isHost && d.replyTo === myId) {
+    if (d.error === 'full') { setSetupStatus('Room is full!', 'error'); return; }
+    players    = d.players;
+    maxPlayers = d.maxPlayers;
+    enterLobby();
+    return;
+  }
+  if (topic === t.state && !isHost) {
+    players = d.players; maxPlayers = d.maxPlayers; renderLobby(); return;
+  }
+  if (topic === t.leave) {
+    delete players[d.from];
+    if (isHost) broadcastState();
+    renderLobby(); return;
+  }
+  if (topic === t.start && !gameStarted) {
+    gameStarted = true; runCountdown(launchGame);
+  }
+}
+
+// ── Wire UI ──
+$('tab-host').onclick = () => {
+  $('tab-host').classList.add('active');   $('tab-join').classList.remove('active');
+  $('host-panel').classList.add('visible');$('join-panel').classList.remove('visible');
+};
+$('tab-join').onclick = () => {
+  $('tab-join').classList.add('active');   $('tab-host').classList.remove('active');
+  $('join-panel').classList.add('visible');$('host-panel').classList.remove('visible');
+};
+
+$('max-minus').onclick = () => { localMaxVal = Math.max(2, localMaxVal-1); $('max-val').textContent = localMaxVal; };
+$('max-plus').onclick  = () => { localMaxVal = Math.min(8, localMaxVal+1); $('max-val').textContent = localMaxVal; };
+
+$('lobby-minus').onclick = () => {
+  maxPlayers = Math.max(Math.max(2, Object.keys(players).length), maxPlayers-1);
+  $('lobby-max-val').textContent = maxPlayers; broadcastState(); renderLobby();
+};
+$('lobby-plus').onclick = () => {
+  maxPlayers = Math.min(8, maxPlayers+1);
+  $('lobby-max-val').textContent = maxPlayers; broadcastState(); renderLobby();
+};
+
+$('host-btn').onclick  = hostRoom;
+$('join-btn').onclick  = joinRoom;
+$('start-btn').onclick = startGame;
+$('copy-btn').onclick  = () => {
+  navigator.clipboard.writeText(roomCode).then(() => {
+    $('copy-btn').textContent = 'COPIED!';
+    setTimeout(() => $('copy-btn').textContent = 'COPY', 2000);
+  });
+};
+
+$('join-code').addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);
+});
+$('host-name').addEventListener('keydown', e => e.key === 'Enter' && hostRoom());
+$('join-code').addEventListener('keydown', e => e.key === 'Enter' && joinRoom());
+
+// ── Initial connection probe ──
+;(function probe() {
+  const c = mqtt.connect(BROKER, { clientId:'probe_'+Math.random().toString(36).slice(2), clean:true, connectTimeout:8000, reconnectPeriod:0 });
+  setConnDot('connecting');
+  c.on('connect', () => { setConnDot('connected'); $('conn-label').textContent = 'Ready to play!'; c.end(true); });
+  c.on('error', () => { setConnDot(''); $('conn-label').textContent = 'Network unavailable'; });
+})();
+</script>
+</body>
+</html>
