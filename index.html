@@ -419,6 +419,15 @@ const MAPS = [
       {type:'box',x:810,y:GROUND_Y-195},
       {type:'box',x:280,y:GROUND_Y-330},
       {type:'bush',x:490,y:GROUND_Y-305},
+    ],
+    jumpPads:[
+      {x:200, y:GROUND_Y,    w:40},
+      {x:680, y:GROUND_Y,    w:40},
+      {x:450, y:GROUND_Y-110,w:36},
+      {x:140, y:GROUND_Y-310,w:36},
+      {x:760, y:GROUND_Y-320,w:36},
+      {x:310, y:GROUND_Y-560,w:36},
+      {x:580, y:GROUND_Y-545,w:36},
     ]
   },
 
@@ -466,6 +475,15 @@ const MAPS = [
       {type:'xmas',x:620,y:GROUND_Y-205},
       {type:'icicle',x:150,y:GROUND_Y-90},
       {type:'icicle',x:565,y:GROUND_Y-95},
+    ],
+    jumpPads:[
+      {x:450, y:GROUND_Y,    w:40},
+      {x:750, y:GROUND_Y,    w:40},
+      {x:240, y:GROUND_Y-205,w:36},
+      {x:640, y:GROUND_Y-205,w:36},
+      {x:420, y:GROUND_Y-455,w:36},
+      {x:325, y:GROUND_Y-565,w:36},
+      {x:805, y:GROUND_Y-548,w:36},
     ]
   },
 
@@ -512,6 +530,15 @@ const MAPS = [
       {type:'sphinx',x:380,y:GROUND_Y},
       {type:'cactus',x:165,y:GROUND_Y-200,scale:.65},
       {type:'cactus',x:640,y:GROUND_Y-200,scale:.6},
+    ],
+    jumpPads:[
+      {x:350, y:GROUND_Y,    w:40},
+      {x:700, y:GROUND_Y,    w:40},
+      {x:560, y:GROUND_Y-90, w:36},
+      {x:160, y:GROUND_Y-310,w:36},
+      {x:760, y:GROUND_Y-322,w:36},
+      {x:460, y:GROUND_Y-672,w:36},
+      {x:210, y:GROUND_Y-660,w:36},
     ]
   },
 
@@ -554,6 +581,15 @@ const MAPS = [
       {type:'star',x:80,y:200},{type:'star',x:300,y:150},{type:'star',x:600,y:250},
       {type:'star',x:850,y:180},{type:'star',x:430,y:100},{type:'star',x:700,y:350},
       {type:'rocket',x:460,y:GROUND_Y},
+    ],
+    jumpPads:[
+      {x:200, y:GROUND_Y,    w:40},
+      {x:750, y:GROUND_Y,    w:40},
+      {x:400, y:GROUND_Y-95, w:36},
+      {x:160, y:GROUND_Y-315,w:36},
+      {x:758, y:GROUND_Y-322,w:36},
+      {x:462, y:GROUND_Y-672,w:36},
+      {x:320, y:GROUND_Y-562,w:36},
     ]
   },
 ];
@@ -702,22 +738,41 @@ function onMsg(topic,raw){
 //  ONLINE HOST / JOIN
 // ══════════════════════════════════════════════════════════════
 function hostRoom(){
-  myName=$('hName').value.trim()||'Player 1';myColor=PCOLORS[0];
+  myName=$('hName').value.trim()||'Player 1';
+  myColor=PCOLORS[0];
   isHost=true;roomCode=genCode();maxPlayers=localMax;gameDur=onlineDurVal;
   players[myId]={name:myName,color:myColor,isHost:true};
-  setSb('sSb','');
-  connectMQTT(()=>{subAll();pub(T().state,lobbyPay(),true);goLobby();});
+  setSb('sSb','Creating room…','inf');
+  $('hostBtn').disabled=true;
+  connectMQTT(()=>{
+    subAll();
+    pub(T().state,lobbyPay(),true);
+    $('hostBtn').disabled=false;
+    setSb('sSb','');
+    fromScreen='onlineScr';
+    buildMapGrid();
+    SHOW('mapScr');
+  });
 }
 function joinRoom(){
   myName=$('jName').value.trim()||'Player';
   myColor=PCOLORS[Math.floor(Math.random()*PCOLORS.length)];
   roomCode=$('jCode').value.trim().toUpperCase();
   if(roomCode.length!==4){setSb('sSb','Enter a 4-letter code!');return;}
-  isHost=false;setSb('sSb','Connecting…','inf');
+  isHost=false;
+  setSb('sSb','Connecting…','inf');
+  $('joinBtn').disabled=true;
   connectMQTT(()=>{
     subAll();
-    setTimeout(()=>pub(T().join,{from:myId,name:myName,color:myColor}),700);
-    setTimeout(()=>{if(!lobbyIn)setSb('sSb','Room not found. Check the code!');},7000);
+    // Retained state from host arrives automatically as a message
+    // Also send a direct join pub after short delay as fallback
+    setTimeout(()=>pub(T().join,{from:myId,name:myName,color:myColor}),600);
+    setTimeout(()=>{
+      if(!lobbyIn){
+        setSb('sSb','Room not found. Check the code!');
+        $('joinBtn').disabled=false;
+      }
+    },7000);
   });
 }
 
@@ -922,6 +977,20 @@ function movePlayer(id,dt){
     }
   }
 
+  // Jump pad collision — triple jump height
+  const jps=MAPS[selectedMap].jumpPads||[];
+  for(const jp of jps){
+    const pB=p.y+PH,pL=p.x-PW,pR=p.x+PW;
+    if(pR>jp.x&&pL<jp.x+jp.w){
+      if(p.vy>=0&&prevY+PH<=jp.y+6&&pB>=jp.y&&pB<=jp.y+p.vy*dt+24){
+        p.y=jp.y-PH;
+        p.vy=JUMP_V*1.9;  // big boost!
+        p.grounded=false;
+        break;
+      }
+    }
+  }
+
   // Wrap bottom
   if(p.y>WH+80){p.y=40;p.x=WW/2;p.vy=0;}
 }
@@ -1023,6 +1092,9 @@ function draw(){
   // Platforms
   m.platforms.forEach(pl=>drawPlatform(ctx,pl,m,ox,oy,s));
 
+  // Jump pads
+  (m.jumpPads||[]).forEach(jp=>drawJumpPad(ctx,jp,ox,oy,s));
+
   // Foreground decos
   drawFgDecos(ctx,m,ox,oy,s);
 
@@ -1084,6 +1156,45 @@ function rRect(ctx,x,y,w,h,r){
   ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
   ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
   ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+}
+
+function drawJumpPad(ctx,jp,ox,oy,s){
+  const sx=wx(jp.x,ox,s), sy=wy(jp.y,oy,s), sw=jp.w*s;
+  if(sy<-40*s||sy>ch+40*s)return;
+  const now=Date.now();
+  const pulse=0.5+0.5*Math.sin(now*0.006);
+
+  // Base plate (dark)
+  ctx.fillStyle='#222';
+  rRect(ctx,sx,sy-4*s,sw,10*s,4*s); ctx.fill();
+
+  // Spring coil
+  ctx.strokeStyle='#ffd24a';
+  ctx.lineWidth=3*s;
+  const cx=sx+sw/2, springH=16*s;
+  for(let i=0;i<3;i++){
+    const fy=sy-4*s-i*springH/3;
+    ctx.beginPath();
+    ctx.moveTo(cx-6*s,fy);
+    ctx.bezierCurveTo(cx-6*s,fy-4*s,cx+6*s,fy-4*s,cx+6*s,fy-springH/3);
+    ctx.stroke();
+  }
+
+  // Top arrow — glows
+  ctx.fillStyle=`rgba(255,210,74,${0.75+0.25*pulse})`;
+  ctx.shadowColor='#ffd24a';
+  ctx.shadowBlur=8+6*pulse*s;
+  ctx.beginPath();
+  ctx.moveTo(cx,     sy-20*s-4*s*pulse);
+  ctx.lineTo(cx-8*s, sy-10*s);
+  ctx.lineTo(cx-3*s, sy-10*s);
+  ctx.lineTo(cx-3*s, sy-4*s);
+  ctx.lineTo(cx+3*s, sy-4*s);
+  ctx.lineTo(cx+3*s, sy-10*s);
+  ctx.lineTo(cx+8*s, sy-10*s);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur=0;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1448,11 +1559,12 @@ document.querySelectorAll('.pcBtn').forEach(btn=>{
 $('localNextBtn').onclick=()=>{fromScreen='localScr';buildMapGrid();SHOW('mapScr');};
 $('mapNextBtn').onclick=()=>{
   if(gameMode==='local'){
-    gameDur=localDurVal;endTime=Date.now()+gameDur*60*1000;
+    gameDur=localDurVal;
+    endTime=Date.now()+gameDur*60*1000;
     spawnLocal();
     countdown(()=>beginGame());
   } else {
-    // Online: go to lobby
+    // Online host goes to lobby after map select
     goLobby();
   }
 };
@@ -1472,14 +1584,7 @@ $('odMin').onclick=()=>{onlineDurVal=Math.max(1,onlineDurVal-1);$('odV').textCon
 $('odMax').onclick=()=>{onlineDurVal=Math.min(10,onlineDurVal+1);$('odV').textContent=onlineDurVal;};
 
 // Online host/join
-$('hostBtn').onclick=()=>{
-  hostRoom();
-  fromScreen='onlineScr';
-  buildMapGrid();
-  // For host: after room created, go to map select, then lobby
-  // Override: go straight to map select which then goes to lobby
-  setTimeout(()=>{ if(mqc?.connected){ SHOW('mapScr'); $('mapNextBtn').onclick=()=>{goLobby();}; }},200);
-};
+$('hostBtn').onclick=hostRoom;  // hostRoom now handles navigation itself
 $('joinBtn').onclick=joinRoom;
 
 // Online lobby
